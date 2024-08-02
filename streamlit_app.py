@@ -1,107 +1,16 @@
 import streamlit as st
-import requests
-import json
-from datetime import datetime, timedelta
-import calendar
+from streamlit.components.v1 import html
+from datetime import datetime
 import random
+import json
 
-BASE_URL = st.secrets["base_url"]
-
-
-def login(username, password, device_info):
-    uri = BASE_URL + "/login"
-    headers = {
-        "Content-Type": "application/json; charset=UTF-8",
-        "Authorization": "",
-        "User-Agent": "okhttp/4.8.1",
-        "Host": st.secrets["hosts"],
-        "Connection": "Keep-Alive",
-        "Accept-Encoding": "gzip"
-    }
-    login_data = {
-        "user_password": password,
-        "user_name": username,
-        **device_info
-    }
-    response = requests.post(uri, headers=headers, data=json.dumps(login_data))
-    return response.json()
-
-
-def get_headers(token):
-    return {
-        "Content-Type": "application/json; charset=UTF-8",
-        'Authorization': 'Bearer ' + token,
-        "User-Agent": "okhttp/4.8.1",
-        "Host": st.secrets["hosts"],
-        "Connection": "Keep-Alive",
-        "Accept-Encoding": "gzip"
-    }
-
-
-@st.cache_data
-def add_presensi(latitude, longitude, gpsckpoint_id, gpsckpoint_name, gpsckpoint_radius, timezone, timezone_name, time,
-                 token):
-    uri = BASE_URL + "/addpresence"
-    presensi_data = {
-        'latitude': latitude,
-        'longitude': longitude,
-        'gpsckpoint_id': gpsckpoint_id,
-        'gpsckpoint_name': gpsckpoint_name,
-        'gpsckpoint_radius': gpsckpoint_radius,
-        'timezone': timezone,
-        'timezone_name': timezone_name,
-        'time': time
-    }
-    response = requests.post(uri, headers=get_headers(token), data=json.dumps(presensi_data))
-    return response.json()
-
-
-@st.cache_data
-def get_checkpoints(token):
-    uri = BASE_URL + "/checkpoints"
-    response = requests.post(uri, headers=get_headers(token))
-    return response.json()
-
-
-def lakukan_presensi(lokasi, token):
-    checkpoints = get_checkpoints(token)['data']
-    if checkpoints:
-        checkpoint_data = checkpoints[lokasi]
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        try:
-            result = add_presensi(
-                str(float(checkpoint_data['gpsckpoint_latitude']) + random.uniform(0.000000001, 0.00001)),
-                str(float(checkpoint_data['gpsckpoint_longitude']) + random.uniform(0.000000001, 0.00001)),
-                checkpoint_data['gpsckpoint_id'],
-                checkpoint_data['gpsckpoint_name'],
-                checkpoint_data['gpsckpoint_radius'],
-                'WIB', 'Asia/Jakarta',
-                now_str,
-                token)
-            st.success("Presensi Berhasil!")
-        except:
-            st.error("Presensi Gagal Dilakukan!")
-    else:
-        st.warning("No checkpoint data available")
-
-
-@st.cache_data
-def datapresencelog(start_date, end_date, token):
-    uri = BASE_URL + "/datapresencelog"
-    data = {
-        'start_date': start_date,
-        'end_date': end_date
-    }
-    response = requests.post(uri, headers=get_headers(token), data=json.dumps(data))
-    return response.json()['data']
+BASE_URL = "https://spreso.bmkg.go.id/api-mobile-presence/index.php/api/v1"
 
 
 def main():
-    st.title("Sistem Presensi")
+    st.title("Sistem Presensi BMKG")
 
     # Initialize session state
-    if 'token' not in st.session_state:
-        st.session_state.token = None
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
     if 'device_info' not in st.session_state:
@@ -110,6 +19,54 @@ def main():
             "device_imei": "0f447cfa064895f8",
             "device_phone_series": "ASUS_AI2201_D"
         }
+
+    # JavaScript function to make API calls
+    js_code = f"""
+    <script>
+    async function makeApiCall(endpoint, data, token = '') {{
+        const response = await fetch("{BASE_URL}/" + endpoint, {{
+            method: 'POST',
+            headers: {{
+                "Content-Type": "application/json; charset=UTF-8",
+                "Authorization": token ? 'Bearer ' + token : '',
+                "User-Agent": "okhttp/4.8.1",
+                "Host": "spreso.bmkg.go.id",
+                "Connection": "Keep-Alive",
+                "Accept-Encoding": "gzip"
+            }},
+            body: JSON.stringify(data)
+        }});
+        return await response.json();
+    }}
+
+    window.login = async function(username, password, deviceInfo) {{
+        const result = await makeApiCall('login', {{
+            user_password: password,
+            user_name: username,
+            ...deviceInfo
+        }});
+        window.parent.postMessage({{type: 'login', result}}, '*');
+    }};
+
+    window.getCheckpoints = async function(token) {{
+        const result = await makeApiCall('checkpoints', {{}}, token);
+        window.parent.postMessage({{type: 'checkpoints', result}}, '*');
+    }};
+
+    window.addPresensi = async function(presenceData, token) {{
+        const result = await makeApiCall('addpresence', presenceData, token);
+        window.parent.postMessage({{type: 'addPresensi', result}}, '*');
+    }};
+
+    window.getDataPresenceLog = async function(startDate, endDate, token) {{
+        const result = await makeApiCall('datapresencelog', {{ start_date: startDate, end_date: endDate }}, token);
+        window.parent.postMessage({{type: 'presenceLog', result}}, '*');
+    }};
+    </script>
+    """
+
+    # Inject JavaScript code
+    html(js_code)
 
     if not st.session_state.logged_in:
         st.header("Login")
@@ -129,14 +86,53 @@ def main():
                                                                                     "device_phone_series"])
 
         if st.button("Login"):
-            result = login(username, password, st.session_state.device_info)
-            if result['status'] == '200':
-                st.session_state.token = result['data'][0]['token']
+            st.write(f"""
+            <script>
+            login('{username}', '{password}', {json.dumps(st.session_state.device_info)});
+            </script>
+            """, unsafe_allow_html=True)
+
+            # Use st.empty() to create a placeholder for the result
+            result_placeholder = st.empty()
+
+            # JavaScript to handle the login result
+            st.write("""
+            <script>
+            window.addEventListener('message', function(event) {
+                if (event.data.type === 'login') {
+                    const result = event.data.result;
+                    if (result.status === '200') {
+                        window.parent.postMessage({
+                            type: 'streamlit:setComponentValue',
+                            value: JSON.stringify({
+                                loggedIn: true,
+                                token: result.data[0].token
+                            })
+                        }, '*');
+                    } else {
+                        window.parent.postMessage({
+                            type: 'streamlit:setComponentValue',
+                            value: JSON.stringify({
+                                loggedIn: false,
+                                error: 'Login failed'
+                            })
+                        }, '*');
+                    }
+                }
+            });
+            </script>
+            """, unsafe_allow_html=True)
+
+            # Handle the result
+            result = json.loads(st.experimental_get_query_params().get('result', ['{}'])[0])
+            if result.get('loggedIn'):
+                st.session_state.token = result['token']
                 st.session_state.logged_in = True
-                st.success("Login berhasil!")
-                st.rerun()  # Rerun the script to update the UI
-            else:
-                st.error("Login gagal. Silakan coba lagi.")
+                result_placeholder.success("Login berhasil!")
+                st.rerun()
+            elif 'error' in result:
+                result_placeholder.error(f"Login gagal: {result['error']}")
+
     else:
         menu = st.sidebar.selectbox(
             "Menu",
@@ -148,32 +144,124 @@ def main():
             start_date = st.date_input("Tanggal Mulai")
             end_date = st.date_input("Tanggal Akhir")
             if st.button("Lihat Histori"):
-                data = datapresencelog(start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'),
-                                       st.session_state.token)
-                st.table(data)
+                st.write(f"""
+                <script>
+                getDataPresenceLog('{start_date}', '{end_date}', '{st.session_state.token}');
+                </script>
+                """, unsafe_allow_html=True)
 
+                # Use st.empty() to create a placeholder for the result
+                result_placeholder = st.empty()
+
+                # JavaScript to handle the presence log result
+                st.write("""
+                <script>
+                window.addEventListener('message', function(event) {
+                    if (event.data.type === 'presenceLog') {
+                        window.parent.postMessage({
+                            type: 'streamlit:setComponentValue',
+                            value: JSON.stringify(event.data.result)
+                        }, '*');
+                    }
+                });
+                </script>
+                """, unsafe_allow_html=True)
+
+                # Handle the result
+                result = json.loads(st.experimental_get_query_params().get('result', ['{}'])[0])
+                if 'data' in result:
+                    result_placeholder.table(result['data'])
+                else:
+                    result_placeholder.error("Failed to fetch presence log")
 
         elif menu == "Lakukan Presensi":
-
             st.header("Lakukan Presensi")
 
-            checkpoints = get_checkpoints(st.session_state.token)
+            st.write(f"""
+            <script>
+            getCheckpoints('{st.session_state.token}');
+            </script>
+            """, unsafe_allow_html=True)
 
-            lokasi_options = [checkpoint['gpsckpoint_name'] for checkpoint in checkpoints['data']]
+            # Use st.empty() to create a placeholder for the checkpoints
+            checkpoints_placeholder = st.empty()
 
-            lokasi = st.selectbox("Pilih lokasi presensi", lokasi_options)
+            # JavaScript to handle the checkpoints result
+            st.write("""
+            <script>
+            window.addEventListener('message', function(event) {
+                if (event.data.type === 'checkpoints') {
+                    window.parent.postMessage({
+                        type: 'streamlit:setComponentValue',
+                        value: JSON.stringify(event.data.result)
+                    }, '*');
+                }
+            });
+            </script>
+            """, unsafe_allow_html=True)
 
-            if st.button("Lakukan Presensi"):
-                checkpoint_id = lokasi_options.index(lokasi)
+            # Handle the checkpoints result
+            checkpoints_result = json.loads(st.experimental_get_query_params().get('result', ['{}'])[0])
+            if 'data' in checkpoints_result:
+                checkpoints = checkpoints_result['data']
+                lokasi_options = [checkpoint['gpsckpoint_name'] for checkpoint in checkpoints]
+                lokasi = checkpoints_placeholder.selectbox("Pilih lokasi presensi", lokasi_options)
 
-                lakukan_presensi(checkpoint_id, st.session_state.token)
+                if st.button("Lakukan Presensi"):
+                    checkpoint_id = lokasi_options.index(lokasi)
+                    checkpoint_data = checkpoints[checkpoint_id]
+                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+                    presence_data = {
+                        'latitude': str(
+                            float(checkpoint_data['gpsckpoint_latitude']) + random.uniform(0.000000001, 0.00001)),
+                        'longitude': str(
+                            float(checkpoint_data['gpsckpoint_longitude']) + random.uniform(0.000000001, 0.00001)),
+                        'gpsckpoint_id': checkpoint_data['gpsckpoint_id'],
+                        'gpsckpoint_name': checkpoint_data['gpsckpoint_name'],
+                        'gpsckpoint_radius': checkpoint_data['gpsckpoint_radius'],
+                        'timezone': 'WIB',
+                        'timezone_name': 'Asia/Jakarta',
+                        'time': now_str
+                    }
+
+                    st.write(f"""
+                    <script>
+                    addPresensi({json.dumps(presence_data)}, '{st.session_state.token}');
+                    </script>
+                    """, unsafe_allow_html=True)
+
+                    # Use st.empty() to create a placeholder for the result
+                    result_placeholder = st.empty()
+
+                    # JavaScript to handle the add presensi result
+                    st.write("""
+                    <script>
+                    window.addEventListener('message', function(event) {
+                        if (event.data.type === 'addPresensi') {
+                            window.parent.postMessage({
+                                type: 'streamlit:setComponentValue',
+                                value: JSON.stringify(event.data.result)
+                            }, '*');
+                        }
+                    });
+                    </script>
+                    """, unsafe_allow_html=True)
+
+                    # Handle the result
+                    result = json.loads(st.experimental_get_query_params().get('result', ['{}'])[0])
+                    if result.get('status') == '200':
+                        result_placeholder.success("Presensi Berhasil!")
+                    else:
+                        result_placeholder.error("Presensi Gagal Dilakukan!")
+            else:
+                checkpoints_placeholder.warning("No checkpoint data available")
 
         elif menu == "Logout":
             st.session_state.token = None
             st.session_state.logged_in = False
             st.success("Logout berhasil!")
-            st.rerun()  # Rerun the script to update the UI
+            st.rerun()
 
 
 if __name__ == "__main__":
