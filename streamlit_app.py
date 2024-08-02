@@ -97,7 +97,7 @@ def datapresencelog(start_date, end_date, token):
 
 
 def main():
-    st.title("Sistem Presensi BMKG")
+    st.title("Sistem Presensi")
 
     # Initialize session state
     if 'token' not in st.session_state:
