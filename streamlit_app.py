@@ -4,9 +4,12 @@ import json
 from datetime import datetime, timedelta
 import calendar
 import random
+from extra_streamlit_components import CookieManager
 
 BASE_URL = st.secrets["base_url"]
 
+# Initialize cookie manager
+cookie_manager = CookieManager()
 
 def login(username, password, device_info):
     uri = BASE_URL + "/login"
@@ -26,7 +29,6 @@ def login(username, password, device_info):
     response = requests.post(uri, headers=headers, data=json.dumps(login_data))
     return response.json()
 
-
 def get_headers(token):
     return {
         "Content-Type": "application/json; charset=UTF-8",
@@ -36,7 +38,6 @@ def get_headers(token):
         "Connection": "Keep-Alive",
         "Accept-Encoding": "gzip"
     }
-
 
 @st.cache_data
 def add_presensi(latitude, longitude, gpsckpoint_id, gpsckpoint_name, gpsckpoint_radius, timezone, timezone_name, time,
@@ -55,13 +56,11 @@ def add_presensi(latitude, longitude, gpsckpoint_id, gpsckpoint_name, gpsckpoint
     response = requests.post(uri, headers=get_headers(token), data=json.dumps(presensi_data))
     return response.json()
 
-
 @st.cache_data
 def get_checkpoints(token):
     uri = BASE_URL + "/checkpoints"
     response = requests.post(uri, headers=get_headers(token))
     return response.json()
-
 
 def lakukan_presensi(lokasi, token):
     checkpoints = get_checkpoints(token)['data']
@@ -84,7 +83,6 @@ def lakukan_presensi(lokasi, token):
     else:
         st.warning("No checkpoint data available")
 
-
 @st.cache_data
 def datapresencelog(start_date, end_date, token):
     uri = BASE_URL + "/datapresencelog"
@@ -95,9 +93,15 @@ def datapresencelog(start_date, end_date, token):
     response = requests.post(uri, headers=get_headers(token), data=json.dumps(data))
     return response.json()['data']
 
-
 def main():
     st.title("Sistem Presensi BMKG")
+
+    # Check if token exists in cookies
+    token = cookie_manager.get(cookie="token")
+    
+    if token is not None:
+        st.session_state.token = token
+        st.session_state.logged_in = True
 
     # Initialize session state
     if 'token' not in st.session_state:
@@ -133,6 +137,8 @@ def main():
             if result['status'] == '200':
                 st.session_state.token = result['data'][0]['token']
                 st.session_state.logged_in = True
+                # Save token to cookie
+                cookie_manager.set("token", st.session_state.token, expires_at=datetime.now() + timedelta(days=30))
                 st.success("Login berhasil!")
                 st.rerun()  # Rerun the script to update the UI
             else:
@@ -152,29 +158,22 @@ def main():
                                        st.session_state.token)
                 st.table(data)
 
-
         elif menu == "Lakukan Presensi":
-
             st.header("Lakukan Presensi")
-
             checkpoints = get_checkpoints(st.session_state.token)
-
             lokasi_options = [checkpoint['gpsckpoint_name'] for checkpoint in checkpoints['data']]
-
             lokasi = st.selectbox("Pilih lokasi presensi", lokasi_options)
-
             if st.button("Lakukan Presensi"):
                 checkpoint_id = lokasi_options.index(lokasi)
-
                 lakukan_presensi(checkpoint_id, st.session_state.token)
-
 
         elif menu == "Logout":
             st.session_state.token = None
             st.session_state.logged_in = False
+            # Remove token from cookie
+            cookie_manager.delete("token")
             st.success("Logout berhasil!")
             st.rerun()  # Rerun the script to update the UI
-
 
 if __name__ == "__main__":
     main()
